@@ -36,4 +36,23 @@ _Avoid_: Rest week, off-week
 A structured training block (typically lasting 4 to 6 weeks) consisting of progressive overload weeks followed by a scheduled deload.
 _Avoid_: Program cycle, block period
 
+**Active Exercise**:
+An exercise performed at least once within the recent training window (default: last 90 days relative to the user's latest logged workout).
+_Avoid_: Current lift, recent exercise
+
+**Dormant Exercise**:
+A historical exercise not performed within the active window (last 90 days). Excluded from the active Plateau & Intervention Radar.
+_Avoid_: Inactive exercise, old exercise, retired exercise
+
+**Last Deload Week**:
+The calendar week during which the athlete's most recent planned volume/intensity reduction occurred. Serves as the anchor date from which the active mesocycle block is calculated.
+_Avoid_: Anchor date, reset point
+
+**Ignored Exercise**:
+An exercise deliberately hidden by the athlete from active plateau alerts and default deep dive lists (e.g., when replaced by an equipment variation or not tracked for progression).
+_Avoid_: Muted lift, blacklisted exercise
+
+
+
+
 
