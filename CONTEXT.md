@@ -52,7 +52,22 @@ _Avoid_: Anchor date, reset point
 An exercise deliberately hidden by the athlete from active plateau alerts and default deep dive lists (e.g., when replaced by an equipment variation or not tracked for progression).
 _Avoid_: Muted lift, blacklisted exercise
 
+**Personal Record**:
+A session in which an exercise's peak e1RM exceeds its previous all-time best. The first session of an exercise sets a baseline and is not counted as a record.
+_Avoid_: PB, max-out, best lift
 
+**Rep Record**:
+The heaviest weight lifted for at least a given number of reps in a single working set (e.g. the 5 RM is the heaviest set of 5 or more reps).
+_Avoid_: Rep max PR, rep best
 
+**Working Set**:
+Any set that is not a warm-up or a rest timer. Only working sets count towards volume, set counts, and records.
+_Avoid_: Real set, counted set
 
+**Muscle Group**:
+The primary muscle region an exercise trains, inferred from the exercise name by keyword (Strong exports carry no muscle data). Unrecognised exercises fall under "Other".
+_Avoid_: Body part, category
 
+**Training Streak**:
+The number of consecutive calendar weeks (Monday start) containing at least one workout session, counted back from the week of the latest logged session.
+_Avoid_: Run, chain

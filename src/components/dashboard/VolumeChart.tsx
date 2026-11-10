@@ -1,106 +1,143 @@
-import React from 'react';
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-} from 'recharts';
-import { WorkoutSession } from '../../types/workout';
+import React, { useMemo, useState } from 'react';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { addDays, format } from 'date-fns';
 import { formatKg } from '../../lib/metrics';
+import { WeeklyStat } from '../../lib/trends';
+import { Card, CardHeader, ChartTooltip, Segmented, chartColors } from '../ui/primitives';
 
 interface VolumeChartProps {
-  sessions: WorkoutSession[];
+  weekly: WeeklyStat[];
 }
 
-export const VolumeChart: React.FC<VolumeChartProps> = ({ sessions }) => {
-  // Aggregate volume by week or by session chronologically
-  const chartData = sessions.map((session) => ({
-    date: session.dateStr,
-    name: session.name,
-    volume: session.totalVolume,
-    duration: session.durationSeconds / 60,
-  }));
+type Metric = 'tonnage' | 'sets' | 'sessions';
+type Range = '12' | '26' | '52' | 'all';
 
-  if (chartData.length === 0) {
-    return null;
-  }
+const metricLabels: Record<Metric, string> = {
+  tonnage: 'Tonnage',
+  sets: 'Sets',
+  sessions: 'Sessions',
+};
+
+const formatCompact = (value: number) =>
+  value >= 1000 ? `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k` : `${value}`;
+
+export const VolumeChart: React.FC<VolumeChartProps> = ({ weekly }) => {
+  const [metric, setMetric] = useState<Metric>('tonnage');
+  const [range, setRange] = useState<Range>('26');
+
+  const rangeOptions = useMemo(() => {
+    const options: { value: Range; label: string }[] = [];
+    if (weekly.length > 12) options.push({ value: '12', label: '12w' });
+    if (weekly.length > 26) options.push({ value: '26', label: '6m' });
+    if (weekly.length > 52) options.push({ value: '52', label: '1y' });
+    if (options.length > 0) options.push({ value: 'all', label: 'All' });
+    return options;
+  }, [weekly.length]);
+
+  const data = useMemo(() => {
+    const slice = range === 'all' ? weekly : weekly.slice(-Number(range));
+    return slice.map((w) => ({
+      ...w,
+      label: format(w.weekStart, 'MMM d'),
+      value: Math.round(w[metric]),
+    }));
+  }, [weekly, range, metric]);
+
+  if (weekly.length === 0) return null;
+
+  const average = data.reduce((sum, d) => sum + d.value, 0) / data.length;
+  const formatValue = (value: number) =>
+    metric === 'tonnage' ? formatKg(value) : `${value} ${metric}`;
 
   return (
-    <div className="glass-panel rounded-2xl p-6 sm:p-7 mt-6">
-      <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-6">
-        <div>
-          <h3 className="text-lg font-bold text-white tracking-tight font-heading">
-            TRAINING VOLUME & WORKLOAD
-          </h3>
-          <p className="text-xs text-slate-400">
-            Session tonnage trend across historical workouts
-          </p>
-        </div>
-        <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
-          TONNAGE (KG)
-        </span>
-      </div>
+    <Card>
+      <CardHeader
+        title="Weekly training load"
+        description={
+          <>
+            Averaging{' '}
+            <span className="font-medium tabular-nums text-fg">
+              {formatValue(Math.round(average))}
+            </span>{' '}
+            per week over {data.length} {data.length === 1 ? 'week' : 'weeks'}
+          </>
+        }
+        action={
+          <>
+            <Segmented
+              aria-label="Metric"
+              value={metric}
+              onChange={setMetric}
+              options={(Object.keys(metricLabels) as Metric[]).map((m) => ({
+                value: m,
+                label: metricLabels[m],
+              }))}
+            />
+            {rangeOptions.length > 0 && (
+              <Segmented
+                aria-label="Time range"
+                value={rangeOptions.some((o) => o.value === range) ? range : 'all'}
+                onChange={setRange}
+                options={rangeOptions}
+              />
+            )}
+          </>
+        }
+      />
 
-      <div className="h-72 w-full">
+      <div className="h-64 w-full px-2 pb-4 pt-4 sm:px-4">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-            <defs>
-              <linearGradient id="cyanVolumeGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#00f2fe" stopOpacity={0.35} />
-                <stop offset="95%" stopColor="#00f2fe" stopOpacity={0.0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.05)" />
+          <BarChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+            <CartesianGrid vertical={false} stroke={chartColors.line} />
             <XAxis
-              dataKey="date"
-              stroke="#64748b"
+              dataKey="label"
+              stroke={chartColors.faint}
               fontSize={11}
               tickLine={false}
-              axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+              axisLine={false}
+              minTickGap={24}
+              tickMargin={8}
             />
             <YAxis
-              stroke="#64748b"
+              stroke={chartColors.faint}
               fontSize={11}
               tickLine={false}
-              axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
-              tickFormatter={(val) => `${(val / 1000).toFixed(0)}k`}
+              axisLine={false}
+              allowDecimals={false}
+              tickFormatter={formatCompact}
+              width={44}
             />
             <Tooltip
-              content={({ active, payload, label }) => {
-                if (active && payload && payload.length) {
-                  const data = payload[0].payload;
-                  return (
-                    <div className="bg-brand-surface/95 border border-white/20 p-3 rounded-xl shadow-xl backdrop-blur-md">
-                      <div className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider">
-                        {label} • {data.name}
-                      </div>
-                      <div className="text-lg font-extrabold text-white mt-1">
-                        {formatKg(data.volume)}
-                      </div>
-                      <div className="text-xs text-slate-400 mt-0.5">
-                        Duration: {Math.round(data.duration)} mins
-                      </div>
+              cursor={{ fill: chartColors.raised }}
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const week = payload[0].payload as (typeof data)[number];
+                return (
+                  <ChartTooltip
+                    title={`${format(week.weekStart, 'MMM d')} – ${format(
+                      addDays(week.weekStart, 6),
+                      'MMM d, yyyy'
+                    )}`}
+                  >
+                    <div className="font-medium text-fg">{formatKg(Math.round(week.tonnage))}</div>
+                    <div className="text-muted">
+                      {week.sets} sets · {week.sessions}{' '}
+                      {week.sessions === 1 ? 'session' : 'sessions'}
                     </div>
-                  );
-                }
-                return null;
+                  </ChartTooltip>
+                );
               }}
             />
-            <Area
-              type="monotone"
-              dataKey="volume"
-              stroke="#00f2fe"
-              strokeWidth={2.5}
-              fillOpacity={1}
-              fill="url(#cyanVolumeGradient)"
-              activeDot={{ r: 6, fill: '#00f2fe', stroke: '#070b16', strokeWidth: 2 }}
+            <Bar
+              dataKey="value"
+              fill={chartColors.accent}
+              radius={[4, 4, 0, 0]}
+              maxBarSize={36}
+              isAnimationActive={false}
             />
-          </AreaChart>
+          </BarChart>
         </ResponsiveContainer>
       </div>
-    </div>
+    </Card>
   );
 };

@@ -1,168 +1,254 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { addDays, format, isValid, parseISO, startOfWeek } from 'date-fns';
+import { X } from 'lucide-react';
 import { UserSettings } from '../../types/workout';
-import { X, Save, Sliders, Scale, CalendarCheck } from 'lucide-react';
+import { DatasetMeta } from '../../lib/db';
+import { Button } from '../ui/primitives';
 
 interface SettingsModalProps {
-  isOpen: boolean;
   onClose: () => void;
   settings: UserSettings;
   onSave: (newSettings: UserSettings) => void;
+  sessionsCount: number;
+  datasetMeta: DatasetMeta | null;
+  onClearData: () => void;
 }
 
+const clamp = (value: number, min: number, max: number, fallback: number) =>
+  Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : fallback;
+
+const Field: React.FC<{
+  label: string;
+  htmlFor: string;
+  hint?: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ label, htmlFor, hint, children }) => (
+  <div>
+    <label htmlFor={htmlFor} className="mb-1.5 block text-[13px] font-medium text-fg">
+      {label}
+    </label>
+    {children}
+    {hint && <p className="mt-1.5 text-xs leading-relaxed text-muted">{hint}</p>}
+  </div>
+);
+
+/**
+ * Rendered only while open, so its form state always starts from the latest
+ * saved settings.
+ */
 export const SettingsModal: React.FC<SettingsModalProps> = ({
-  isOpen,
   onClose,
   settings,
   onSave,
+  sessionsCount,
+  datasetMeta,
+  onClearData,
 }) => {
-  const [mesocycleWeeks, setMesocycleWeeks] = useState(settings.mesocycleWeeks || 6);
+  const [mesocycleWeeks, setMesocycleWeeks] = useState(String(settings.mesocycleWeeks || 6));
   const [plateauThreshold, setPlateauThreshold] = useState(
-    settings.plateauThresholdSessions || 3
+    String(settings.plateauThresholdSessions || 3)
   );
   const [lastDeloadDate, setLastDeloadDate] = useState(settings.lastDeloadDate || '');
-  const [bodyweight, setBodyweight] = useState<string>(
+  const [bodyweight, setBodyweight] = useState(
     settings.bodyweightKg ? settings.bodyweightKg.toString() : ''
   );
+  const [ignored, setIgnored] = useState<string[]>(settings.ignoredExercises || []);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const parsedBodyweight = parseFloat(bodyweight.replace(',', '.'));
     onSave({
-      mesocycleWeeks: Number(mesocycleWeeks),
-      plateauThresholdSessions: Number(plateauThreshold),
+      // Keep any settings this form does not edit
+      ...settings,
+      mesocycleWeeks: clamp(Number(mesocycleWeeks), 3, 12, 6),
+      plateauThresholdSessions: clamp(Number(plateauThreshold), 2, 6, 3),
       lastDeloadDate: lastDeloadDate || undefined,
-      bodyweightKg: bodyweight ? parseFloat(bodyweight) : undefined,
+      bodyweightKg: parsedBodyweight > 0 ? parsedBodyweight : undefined,
+      ignoredExercises: ignored,
     });
     onClose();
   };
 
+  const deloadParsed = lastDeloadDate ? parseISO(lastDeloadDate) : null;
+  const nextBlockStart =
+    deloadParsed && isValid(deloadParsed)
+      ? addDays(startOfWeek(deloadParsed, { weekStartsOn: 1 }), 7)
+      : null;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-brand-bg/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="glass-panel w-full max-w-md rounded-2xl border border-white/20 p-6 sm:p-7 shadow-2xl relative">
-        <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-5">
-          <div className="flex items-center space-x-2.5">
-            <Sliders className="w-5 h-5 text-cyan-400" />
-            <h3 className="text-lg font-bold text-white font-heading">
-              SETTINGS & DELOAD CADENCE
-            </h3>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-white transition"
-          >
-            <X className="w-5 h-5" />
-          </button>
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+        className="flex max-h-[92vh] w-full max-w-lg animate-fade-up flex-col rounded-t-2xl border border-line bg-surface shadow-pop sm:rounded-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-line px-5 py-4">
+          <h3 id="settings-title" className="text-[15px] font-semibold text-fg">
+            Settings
+          </h3>
+          <Button variant="ghost" size="sm" className="w-8 px-0" onClick={onClose} aria-label="Close">
+            <X className="h-4 w-4" />
+          </Button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Last Deload Week */}
-          <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center space-x-1.5">
-                <CalendarCheck className="w-3.5 h-3.5 text-amber-400" />
-                <span>Last Deload Week</span>
-              </label>
-              {lastDeloadDate && (
-                <button
-                  type="button"
-                  onClick={() => setLastDeloadDate('')}
-                  className="text-[10px] text-slate-400 hover:text-white transition underline"
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
+            <section className="space-y-4">
+              <h4 className="eyebrow">Mesocycle</h4>
+              <Field
+                label="Last deload week"
+                htmlFor="last-deload"
+                hint={
+                  nextBlockStart ? (
+                    <>
+                      Your current block is counted from{' '}
+                      <span className="text-fg">{format(nextBlockStart, 'EEEE, MMM d, yyyy')}</span>
+                      , the Monday after that week.
+                    </>
+                  ) : (
+                    'Pick any day in your most recent deload week. Leave empty to detect it from sessions named or noted "deload".'
+                  )
+                }
+              >
+                <div className="flex gap-2">
+                  <input
+                    id="last-deload"
+                    type="date"
+                    value={lastDeloadDate}
+                    onChange={(e) => setLastDeloadDate(e.target.value)}
+                    className="input"
+                  />
+                  {lastDeloadDate && (
+                    <Button variant="ghost" onClick={() => setLastDeloadDate('')}>
+                      Auto-detect
+                    </Button>
+                  )}
+                </div>
+              </Field>
+
+              <div className="grid grid-cols-2 gap-4">
+                <Field
+                  label="Mesocycle length"
+                  htmlFor="meso-weeks"
+                  hint="Weeks per block, 3–12. The last week is the deload."
                 >
-                  Clear (Auto-Detect)
-                </button>
-              )}
-            </div>
-            <input
-              type="date"
-              value={lastDeloadDate}
-              onChange={(e) => setLastDeloadDate(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-900 border border-amber-500/30 rounded-lg text-sm text-white focus:outline-none focus:border-amber-400"
-            />
-            <p className="text-[11px] text-amber-200/80 mt-1.5 leading-relaxed">
-              Pick any date in your last deload week (e.g. <strong>2026-09-07</strong> to <strong>2026-09-13</strong>). Your new 6-week training block automatically starts on Monday, Sep 14.
-            </p>
+                  <input
+                    id="meso-weeks"
+                    type="number"
+                    min={3}
+                    max={12}
+                    value={mesocycleWeeks}
+                    onChange={(e) => setMesocycleWeeks(e.target.value)}
+                    className="input"
+                  />
+                </Field>
+                <Field
+                  label="Plateau threshold"
+                  htmlFor="plateau-threshold"
+                  hint="Sessions with a flat e1RM before an exercise is flagged, 2–6."
+                >
+                  <input
+                    id="plateau-threshold"
+                    type="number"
+                    min={2}
+                    max={6}
+                    value={plateauThreshold}
+                    onChange={(e) => setPlateauThreshold(e.target.value)}
+                    className="input"
+                  />
+                </Field>
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <h4 className="eyebrow">Athlete</h4>
+              <Field
+                label="Bodyweight (kg)"
+                htmlFor="bodyweight"
+                hint="Optional. Shows your e1RM as a multiple of bodyweight on each exercise."
+              >
+                <input
+                  id="bodyweight"
+                  type="number"
+                  step="0.1"
+                  min={0}
+                  placeholder="e.g. 82.5"
+                  value={bodyweight}
+                  onChange={(e) => setBodyweight(e.target.value)}
+                  className="input"
+                />
+              </Field>
+            </section>
+
+            {ignored.length > 0 && (
+              <section className="space-y-2">
+                <h4 className="eyebrow">Ignored exercises</h4>
+                <ul className="divide-y divide-line rounded-lg border border-line">
+                  {ignored.map((name) => (
+                    <li key={name} className="flex items-center justify-between gap-3 px-3 py-1.5">
+                      <span className="truncate text-[13px] text-fg">{name}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setIgnored(ignored.filter((n) => n !== name))}
+                      >
+                        Restore
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            <section className="space-y-2">
+              <h4 className="eyebrow">Data</h4>
+              <div className="flex items-center justify-between gap-4 rounded-lg border border-line px-3 py-2.5">
+                <p className="min-w-0 text-[13px] text-muted">
+                  {sessionsCount === 0 ? (
+                    'No workout history stored.'
+                  ) : (
+                    <>
+                      <span className="text-fg">{sessionsCount} sessions</span> stored in this
+                      browser
+                      {datasetMeta?.isDemo
+                        ? ' (demo data)'
+                        : datasetMeta?.fileName
+                        ? ` from ${datasetMeta.fileName}`
+                        : ''}
+                      .
+                    </>
+                  )}
+                </p>
+                {sessionsCount > 0 && (
+                  <Button variant="danger" size="sm" onClick={onClearData}>
+                    Clear data
+                  </Button>
+                )}
+              </div>
+            </section>
           </div>
 
-          {/* Mesocycle Length */}
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-              Mesocycle Length (Weeks)
-            </label>
-            <div className="flex items-center space-x-3">
-              <input
-                type="number"
-                min="3"
-                max="12"
-                value={mesocycleWeeks}
-                onChange={(e) => setMesocycleWeeks(Number(e.target.value))}
-                className="w-full px-3 py-2 bg-slate-900/80 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-cyan-400"
-              />
-              <span className="text-xs text-slate-400 whitespace-nowrap">Weeks per block</span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Standard interval before systemic deload triggers (default: 6 weeks).
-            </p>
-          </div>
-
-          {/* Plateau Threshold */}
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-              Plateau Detection Sensitivity
-            </label>
-            <div className="flex items-center space-x-3">
-              <input
-                type="number"
-                min="2"
-                max="6"
-                value={plateauThreshold}
-                onChange={(e) => setPlateauThreshold(Number(e.target.value))}
-                className="w-full px-3 py-2 bg-slate-900/80 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-cyan-400"
-              />
-              <span className="text-xs text-slate-400 whitespace-nowrap">Stagnant sessions</span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Consecutive sessions with flat e1RM before an exercise is flagged (default: 3).
-            </p>
-          </div>
-
-          {/* Bodyweight */}
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-              Athlete Bodyweight (kg) - Optional
-            </label>
-            <div className="relative">
-              <Scale className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="number"
-                step="0.5"
-                placeholder="e.g. 82.5"
-                value={bodyweight}
-                onChange={(e) => setBodyweight(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-slate-900/80 border border-white/10 rounded-xl text-sm text-white placeholder-slate-600 focus:outline-none focus:border-cyan-400"
-              />
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Used to supplement volume calculations for bodyweight movements (Pull-ups, Dips).
-            </p>
-          </div>
-
-          {/* Actions */}
-          <div className="pt-3 border-t border-white/10 flex items-center justify-end space-x-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white bg-white/5 transition"
-            >
+          <div className="flex items-center justify-end gap-2 border-t border-line px-5 py-3.5">
+            <Button variant="ghost" onClick={onClose}>
               Cancel
-            </button>
-            <button
-              type="submit"
-              className="flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-cyan-500 text-brand-bg hover:bg-cyan-400 transition shadow-glow-cyan"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>Save Preferences</span>
-            </button>
+            </Button>
+            <Button type="submit" variant="primary">
+              Save
+            </Button>
           </div>
         </form>
       </div>

@@ -1,54 +1,77 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { differenceInDays } from 'date-fns';
+import { CircleAlert, CircleCheck, Upload, X } from 'lucide-react';
 import { WorkoutSession, UserSettings } from './types/workout';
 import { Header } from './components/layout/Header';
-import { TabsNav, TabKey } from './components/layout/TabsNav';
+import { TabKey, TAB_KEYS } from './components/layout/TabsNav';
+import { Welcome } from './components/layout/Welcome';
 import { MesocycleBanner } from './components/dashboard/MesocycleBanner';
 import { StatCardGrid } from './components/dashboard/StatCardGrid';
 import { PlateauRadar } from './components/dashboard/PlateauRadar';
 import { VolumeChart } from './components/dashboard/VolumeChart';
+import { MuscleGroupChart } from './components/dashboard/MuscleGroupChart';
+import { ConsistencyHeatmap } from './components/dashboard/ConsistencyHeatmap';
+import { RecentRecords } from './components/dashboard/RecentRecords';
 import { ExerciseSelector } from './components/exercises/ExerciseSelector';
 import { ExerciseMetrics } from './components/exercises/ExerciseMetrics';
 import { ProgressionChart } from './components/exercises/ProgressionChart';
+import { RepRecords } from './components/exercises/RepRecords';
 import { ExerciseHistory } from './components/exercises/ExerciseHistory';
 import { SessionList } from './components/sessions/SessionList';
+import { RecordsBoard } from './components/records/RecordsBoard';
 import { SettingsModal } from './components/settings/SettingsModal';
+import { cn } from './components/ui/primitives';
 import { parseStrongCsv } from './lib/csvParser';
 import { analyzeExercisePlateaus } from './lib/plateauDetector';
 import { calculateMesocycleStatus } from './lib/mesocycle';
+import { computeRecords, getExerciseHistory } from './lib/records';
+import { buildWeeklyStats, calculateStreak, comparePeriods } from './lib/trends';
 import { DEMO_STRONG_CSV } from './lib/demoData';
 import {
-  getAllSessionsFromDB,
-  saveSessionsToDB,
+  DatasetMeta,
+  DEFAULT_SETTINGS,
   clearAllSessionsFromDB,
+  getAllSessionsFromDB,
+  getDatasetMetaFromDB,
   getUserSettingsFromDB,
+  replaceSessionsInDB,
+  saveDatasetMetaToDB,
   saveUserSettingsToDB,
 } from './lib/db';
-import { UploadCloud, Sparkles, Dumbbell, ShieldAlert } from 'lucide-react';
-import { differenceInDays } from 'date-fns';
+
+interface Toast {
+  kind: 'success' | 'error';
+  message: string;
+}
+
+function tabFromHash(): TabKey {
+  const hash = window.location.hash.replace('#', '') as TabKey;
+  return TAB_KEYS.includes(hash) ? hash : 'overview';
+}
 
 export const App: React.FC = () => {
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
-  const [settings, setSettings] = useState<UserSettings>({
-    plateauThresholdSessions: 3,
-    mesocycleWeeks: 6,
-  });
+  const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
+  const [datasetMeta, setDatasetMeta] = useState<DatasetMeta | null>(null);
   const [selectedExercise, setSelectedExercise] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabKey>(tabFromHash);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isDemoLoaded, setIsDemoLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDragging, setIsDragging] = useState(false);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const [isDark, setIsDark] = useState(() =>
+    document.documentElement.classList.contains('dark')
+  );
+  const dragDepth = useRef(0);
 
   // Hydrate from IndexedDB on initial mount
   useEffect(() => {
     async function initDB() {
       try {
-        const storedSettings = await getUserSettingsFromDB();
-        setSettings(storedSettings);
-
+        setSettings(await getUserSettingsFromDB());
+        setDatasetMeta(await getDatasetMetaFromDB());
         const storedSessions = await getAllSessionsFromDB();
-        if (storedSessions.length > 0) {
-          setSessions(storedSessions);
-        }
+        if (storedSessions.length > 0) setSessions(storedSessions);
       } catch (err) {
         console.error('Failed to load from IndexedDB:', err);
       } finally {
@@ -58,7 +81,45 @@ export const App: React.FC = () => {
     initDB();
   }, []);
 
-  // Compute plateau reports
+  // Auto-dismiss toasts
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), toast.kind === 'error' ? 7000 : 4000);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
+  // Keep the active tab in the URL hash so reloads and back/forward work
+  const changeTab = useCallback((tab: TabKey) => {
+    setActiveTab(tab);
+    if (window.location.hash !== `#${tab}`) {
+      window.history.pushState(null, '', `#${tab}`);
+    }
+    window.scrollTo({ top: 0 });
+  }, []);
+
+  useEffect(() => {
+    const onNavigate = () => setActiveTab(tabFromHash());
+    window.addEventListener('popstate', onNavigate);
+    window.addEventListener('hashchange', onNavigate);
+    return () => {
+      window.removeEventListener('popstate', onNavigate);
+      window.removeEventListener('hashchange', onNavigate);
+    };
+  }, []);
+
+  const toggleTheme = () => {
+    const next = !isDark;
+    document.documentElement.classList.toggle('dark', next);
+    try {
+      localStorage.setItem('theme', next ? 'dark' : 'light');
+    } catch {
+      // Storage unavailable (private mode): the choice lasts for this visit only
+    }
+    setIsDark(next);
+  };
+
+  /* ---------- Derived analytics ---------- */
+
   const plateauReports = useMemo(() => {
     return analyzeExercisePlateaus(sessions, {
       thresholdSessions: settings.plateauThresholdSessions || 3,
@@ -66,31 +127,41 @@ export const App: React.FC = () => {
     });
   }, [sessions, settings.plateauThresholdSessions, settings.ignoredExercises]);
 
-
-  // Compute mesocycle deload report
   const mesocycleStatus = useMemo(() => {
     return calculateMesocycleStatus(sessions, plateauReports, settings);
   }, [sessions, plateauReports, settings]);
+
+  const records = useMemo(() => computeRecords(sessions), [sessions]);
+  const weekly = useMemo(() => buildWeeklyStats(sessions), [sessions]);
+  const streak = useMemo(() => calculateStreak(weekly), [weekly]);
+  const tonnageComparison = useMemo(
+    () => comparePeriods(weekly, (w) => w.tonnage, 4),
+    [weekly]
+  );
+  const recentTonnageKg = useMemo(
+    () => weekly.slice(-4).reduce((sum, w) => sum + w.tonnage, 0),
+    [weekly]
+  );
 
   // Default selected exercise if not set or invalid
   useEffect(() => {
     if (plateauReports.length > 0) {
       const exists = plateauReports.some((r) => r.exerciseName === selectedExercise);
       if (!exists || !selectedExercise) {
-        // Default to first plateaued lift, or first lift
         setSelectedExercise(plateauReports[0].exerciseName);
       }
     }
   }, [plateauReports, selectedExercise]);
 
-  // High-level aggregate metrics
-  const totalTonnageKg = useMemo(() => {
-    return sessions.reduce((sum, s) => sum + s.totalVolume, 0);
-  }, [sessions]);
+  const totalTonnageKg = useMemo(
+    () => sessions.reduce((sum, s) => sum + s.totalVolume, 0),
+    [sessions]
+  );
 
   const stalledLiftsCount = useMemo(() => {
     return plateauReports.filter(
-      (r) => r.isActive && (r.status === 'plateaued' || r.status === 'regressing')
+      (r) =>
+        r.isActive && !r.isIgnored && (r.status === 'plateaued' || r.status === 'regressing')
     ).length;
   }, [plateauReports]);
 
@@ -99,25 +170,45 @@ export const App: React.FC = () => {
     const start = sessions[0].startTime;
     const end = sessions[sessions.length - 1].startTime;
     const days = Math.max(7, differenceInDays(end, start));
-    const weeks = days / 7;
-    return sessions.length / weeks;
+    return sessions.length / (days / 7);
   }, [sessions]);
+
+  const selectedReport = plateauReports.find((r) => r.exerciseName === selectedExercise);
+  const selectedHistory = useMemo(
+    () => (selectedExercise ? getExerciseHistory(sessions, selectedExercise) : []),
+    [sessions, selectedExercise]
+  );
+
+  /* ---------- Actions ---------- */
+
+  const importSessions = async (parsed: WorkoutSession[], meta: DatasetMeta) => {
+    await replaceSessionsInDB(parsed);
+    await saveDatasetMetaToDB(meta);
+    setSessions(parsed);
+    setDatasetMeta(meta);
+    setSelectedExercise('');
+  };
 
   const handleFileUpload = async (file: File) => {
     setIsLoading(true);
     try {
-      const text = await file.text();
-      const parsedSessions = parseStrongCsv(text);
-      if (parsedSessions.length === 0) {
-        alert('No workout sessions found in CSV. Please ensure it is a valid Strong export.');
+      const parsed = parseStrongCsv(await file.text());
+      if (parsed.length === 0) {
+        setToast({
+          kind: 'error',
+          message: `No workout sessions found in ${file.name}. Is it a Strong CSV export?`,
+        });
         return;
       }
-      await saveSessionsToDB(parsedSessions);
-      setSessions(parsedSessions);
-      setIsDemoLoaded(false);
+      await importSessions(parsed, {
+        isDemo: false,
+        importedAt: new Date().toISOString(),
+        fileName: file.name,
+      });
+      setToast({ kind: 'success', message: `Imported ${parsed.length} sessions.` });
     } catch (err) {
       console.error('Failed to parse Strong CSV:', err);
-      alert('Error parsing Strong CSV file.');
+      setToast({ kind: 'error', message: `Could not read ${file.name} as a Strong CSV export.` });
     } finally {
       setIsLoading(false);
     }
@@ -126,23 +217,27 @@ export const App: React.FC = () => {
   const handleLoadDemo = async () => {
     setIsLoading(true);
     try {
-      const demoSessions = parseStrongCsv(DEMO_STRONG_CSV);
-      await saveSessionsToDB(demoSessions);
-      setSessions(demoSessions);
-      setIsDemoLoaded(true);
+      await importSessions(parseStrongCsv(DEMO_STRONG_CSV), {
+        isDemo: true,
+        importedAt: new Date().toISOString(),
+      });
     } catch (err) {
       console.error('Failed to load demo data:', err);
+      setToast({ kind: 'error', message: 'Could not load the demo data.' });
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleClearData = async () => {
-    if (window.confirm('Are you sure you want to clear all imported workouts?')) {
-      await clearAllSessionsFromDB();
-      setSessions([]);
-      setIsDemoLoaded(false);
+    if (!window.confirm('Remove all imported sessions from this browser? Settings are kept.')) {
+      return;
     }
+    await clearAllSessionsFromDB();
+    await saveDatasetMetaToDB(null);
+    setSessions([]);
+    setDatasetMeta(null);
+    setIsSettingsOpen(false);
   };
 
   const handleSaveSettings = async (newSettings: UserSettings) => {
@@ -152,101 +247,77 @@ export const App: React.FC = () => {
 
   const handleToggleIgnoreExercise = async (exerciseName: string) => {
     const current = settings.ignoredExercises || [];
-    const isAlreadyIgnored = current.includes(exerciseName);
-    const updated = isAlreadyIgnored
+    const updated = current.includes(exerciseName)
       ? current.filter((name) => name !== exerciseName)
       : [...current, exerciseName];
-
-    const newSettings = { ...settings, ignoredExercises: updated };
-    setSettings(newSettings);
-    await saveUserSettingsToDB(newSettings);
+    await handleSaveSettings({ ...settings, ignoredExercises: updated });
   };
 
-  const handleSelectExerciseFromRadar = (exerciseName: string) => {
+  const openExercise = (exerciseName: string) => {
     setSelectedExercise(exerciseName);
-    setActiveTab('exercises');
+    changeTab('exercises');
   };
 
-  const selectedReport = plateauReports.find(
-    (r) => r.exerciseName === selectedExercise
-  );
+  /* ---------- Drag and drop import ---------- */
+
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
+
+  const dragHandlers = {
+    onDragEnter: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth.current += 1;
+      setIsDragging(true);
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setIsDragging(false);
+    },
+    onDrop: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth.current = 0;
+      setIsDragging(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file) handleFileUpload(file);
+    },
+  };
+
+  const hasData = sessions.length > 0;
 
   return (
-    <div className="min-h-screen flex flex-col bg-brand-bg text-slate-100 selection:bg-cyan-500/20 selection:text-cyan-300">
+    <div className="flex min-h-screen flex-col" {...dragHandlers}>
       <Header
         onFileUpload={handleFileUpload}
-        onLoadDemo={handleLoadDemo}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        onClearData={handleClearData}
-        hasData={sessions.length > 0}
-        isDemoLoaded={isDemoLoaded}
+        onToggleTheme={toggleTheme}
+        isDark={isDark}
+        hasData={hasData}
+        isDemoLoaded={hasData && !!datasetMeta?.isDemo}
+        activeTab={activeTab}
+        onTabChange={changeTab}
+        plateauCount={stalledLiftsCount}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-8">
         {isLoading ? (
-          <div className="flex items-center justify-center min-h-[50vh]">
-            <div className="text-center">
-              <div className="w-12 h-12 border-4 border-cyan-400 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-              <p className="text-sm font-semibold text-slate-400">Loading workout data...</p>
-            </div>
-          </div>
-        ) : sessions.length === 0 ? (
-          /* Empty State / Welcome Dropzone */
-          <div className="max-w-2xl mx-auto my-12 text-center">
-            <div className="glass-panel rounded-3xl p-8 sm:p-12 border border-white/10 shadow-2xl relative overflow-hidden">
-              <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-cyan-500/20 to-emerald-500/20 border border-cyan-500/30 flex items-center justify-center mx-auto mb-6 shadow-glow-cyan">
-                <Dumbbell className="w-10 h-10 text-cyan-400" />
-              </div>
-
-              <h2 className="text-3xl font-extrabold text-white font-heading tracking-tight mb-3">
-                ANALYZE YOUR STRONG LOGS
-              </h2>
-              <p className="text-slate-400 text-sm leading-relaxed mb-8 max-w-md mx-auto">
-                Discover lift plateaus, calculate true theoretical 1RMs, and automate your 6-week mesocycle deload schedule directly in your browser.
-              </p>
-
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                <label className="w-full sm:w-auto flex items-center justify-center space-x-2 px-6 py-3.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-brand-bg font-extrabold text-sm transition cursor-pointer shadow-glow-cyan">
-                  <UploadCloud className="w-5 h-5" />
-                  <span>Upload Strong CSV</span>
-                  <input
-                    type="file"
-                    accept=".csv"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handleFileUpload(file);
-                    }}
-                  />
-                </label>
-
-                <button
-                  onClick={handleLoadDemo}
-                  className="w-full sm:w-auto flex items-center justify-center space-x-2 px-6 py-3.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-amber-300 border border-amber-500/30 font-bold text-sm transition shadow-glow-gold"
-                >
-                  <Sparkles className="w-4 h-4 fill-amber-300" />
-                  <span>Explore Demo Dataset (8 Weeks)</span>
-                </button>
-              </div>
-
-              <div className="mt-8 pt-6 border-t border-white/5 text-[11px] text-slate-500 flex items-center justify-center space-x-2">
-                <ShieldAlert className="w-4 h-4 text-emerald-400" />
-                <span>100% Private & Local: All data stays in your browser's IndexedDB.</span>
-              </div>
-            </div>
-          </div>
-        ) : (
-          /* Active Workout Explorer */
-          <div>
-            <TabsNav
-              activeTab={activeTab}
-              onTabChange={setActiveTab}
-              plateauCount={stalledLiftsCount}
+          <div className="flex min-h-[50vh] items-center justify-center">
+            <div
+              className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
+              role="status"
+              aria-label="Loading"
             />
-
-            {/* TAB 1: DASHBOARD & DELOAD RADAR */}
-            {activeTab === 'dashboard' && (
-              <div className="space-y-6">
+          </div>
+        ) : !hasData ? (
+          <Welcome onFileUpload={handleFileUpload} onLoadDemo={handleLoadDemo} />
+        ) : (
+          <div key={activeTab} className="animate-fade-up">
+            {activeTab === 'overview' && (
+              <div className="space-y-4">
                 <MesocycleBanner
                   mesocycle={mesocycleStatus}
                   onOpenSettings={() => setIsSettingsOpen(true)}
@@ -254,56 +325,130 @@ export const App: React.FC = () => {
                 <StatCardGrid
                   totalSessions={sessions.length}
                   stalledLiftsCount={stalledLiftsCount}
+                  plateauThreshold={settings.plateauThresholdSessions || 3}
                   totalTonnageKg={totalTonnageKg}
                   weeklyFrequency={weeklyFrequency}
+                  streak={streak}
+                  tonnageComparison={tonnageComparison}
+                  recentTonnageKg={recentTonnageKg}
                 />
-                <PlateauRadar
-                  plateauReports={plateauReports}
-                  onSelectExercise={handleSelectExerciseFromRadar}
-                  onToggleIgnore={handleToggleIgnoreExercise}
-                />
-                <VolumeChart sessions={sessions} />
+                <div className="grid items-start gap-4 lg:grid-cols-5">
+                  <div className="lg:col-span-3">
+                    <PlateauRadar
+                      plateauReports={plateauReports}
+                      onSelectExercise={openExercise}
+                      onToggleIgnore={handleToggleIgnoreExercise}
+                    />
+                  </div>
+                  <div className="lg:col-span-2">
+                    <RecentRecords
+                      events={records.events}
+                      onSelectExercise={openExercise}
+                      onViewAll={() => changeTab('records')}
+                    />
+                  </div>
+                </div>
+                <VolumeChart weekly={weekly} />
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <MuscleGroupChart weekly={weekly} />
+                  <ConsistencyHeatmap sessions={sessions} weeks={Math.min(26, Math.max(12, weekly.length))} />
+                </div>
               </div>
             )}
 
-            {/* TAB 2: EXERCISE DEEP DIVE */}
             {activeTab === 'exercises' && (
-              <div>
+              <div className="grid items-start gap-4 lg:grid-cols-[17rem_1fr]">
                 <ExerciseSelector
                   plateauReports={plateauReports}
                   selectedExercise={selectedExercise}
                   onSelect={setSelectedExercise}
                 />
                 {selectedReport && (
-                  <>
+                  <div className="min-w-0 space-y-4">
                     <ExerciseMetrics
                       report={selectedReport}
+                      records={records.byExercise.get(selectedReport.exerciseName)}
+                      bodyweightKg={settings.bodyweightKg}
                       onToggleIgnore={handleToggleIgnoreExercise}
                     />
-                    <ProgressionChart report={selectedReport} />
+                    <ProgressionChart history={selectedHistory} />
+                    {records.byExercise.has(selectedReport.exerciseName) && (
+                      <RepRecords
+                        records={records.byExercise.get(selectedReport.exerciseName)!}
+                        lastTopWeight={selectedReport.lastTopWeight}
+                      />
+                    )}
                     <ExerciseHistory
                       exerciseName={selectedReport.exerciseName}
-                      sessions={sessions}
+                      history={selectedHistory}
                     />
-                  </>
+                  </div>
                 )}
               </div>
             )}
 
+            {activeTab === 'sessions' && (
+              <SessionList
+                sessions={sessions}
+                recordsBySession={records.eventsBySession}
+                onSelectExercise={openExercise}
+              />
+            )}
 
-            {/* TAB 3: SESSION LOG */}
-            {activeTab === 'sessions' && <SessionList sessions={sessions} />}
+            {activeTab === 'records' && (
+              <RecordsBoard records={records} onSelectExercise={openExercise} />
+            )}
           </div>
         )}
       </main>
 
-      {/* Settings Modal */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        settings={settings}
-        onSave={handleSaveSettings}
-      />
+      <footer className="mx-auto w-full max-w-6xl px-4 pb-6 text-xs text-faint sm:px-6">
+        Your data stays in this browser. Nothing is uploaded.
+      </footer>
+
+      {isSettingsOpen && (
+        <SettingsModal
+          onClose={() => setIsSettingsOpen(false)}
+          settings={settings}
+          onSave={handleSaveSettings}
+          sessionsCount={sessions.length}
+          datasetMeta={datasetMeta}
+          onClearData={handleClearData}
+        />
+      )}
+
+      {isDragging && (
+        <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-bg/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-col items-center rounded-2xl border-2 border-dashed border-accent bg-surface px-10 py-12 text-center shadow-pop">
+            <Upload className="h-7 w-7 text-accent" />
+            <p className="mt-3 text-[15px] font-medium text-fg">Drop your Strong CSV to import</p>
+            {hasData && (
+              <p className="mt-1 text-[13px] text-muted">This replaces the current data.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div
+          role="status"
+          className="fixed bottom-5 left-1/2 z-[70] flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 animate-fade-up items-start gap-2.5 rounded-xl border border-line bg-surface px-4 py-3 shadow-pop"
+        >
+          {toast.kind === 'success' ? (
+            <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-good" />
+          ) : (
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-bad" />
+          )}
+          <p className={cn('flex-1 text-[13px] leading-relaxed text-fg')}>{toast.message}</p>
+          <button
+            onClick={() => setToast(null)}
+            className="text-faint transition-colors hover:text-fg"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 };

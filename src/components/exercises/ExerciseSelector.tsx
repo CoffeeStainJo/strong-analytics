@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Search, EyeOff } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { ExercisePlateauReport } from '../../types/workout';
+import { Card, Segmented, cn, describeStatus, toneDot } from '../ui/primitives';
 
 interface ExerciseSelectorProps {
   plateauReports: ExercisePlateauReport[];
@@ -8,127 +9,93 @@ interface ExerciseSelectorProps {
   onSelect: (exerciseName: string) => void;
 }
 
+type FilterMode = 'active' | 'all' | 'ignored';
+
 export const ExerciseSelector: React.FC<ExerciseSelectorProps> = ({
   plateauReports,
   selectedExercise,
   onSelect,
 }) => {
   const [search, setSearch] = useState('');
-  const [filterMode, setFilterMode] = useState<'active' | 'all' | 'ignored'>('active');
+  const [filterMode, setFilterMode] = useState<FilterMode>('active');
 
   const activeCount = plateauReports.filter((r) => r.isActive && !r.isIgnored).length;
   const ignoredCount = plateauReports.filter((r) => r.isIgnored).length;
 
+  const query = search.trim().toLowerCase();
   const filtered = plateauReports.filter((item) => {
-    const matchesSearch = item.exerciseName.toLowerCase().includes(search.toLowerCase());
-    if (!matchesSearch) return false;
-
-    if (filterMode === 'active') {
-      return item.isActive && !item.isIgnored;
-    }
-    if (filterMode === 'ignored') {
-      return item.isIgnored;
-    }
-    return true; // 'all'
+    if (query && !item.exerciseName.toLowerCase().includes(query)) return false;
+    // Searching looks across every exercise so nothing is hidden behind a filter
+    if (query) return true;
+    if (filterMode === 'active') return item.isActive && !item.isIgnored;
+    if (filterMode === 'ignored') return item.isIgnored;
+    return true;
   });
 
-  return (
-    <div className="glass-panel rounded-2xl p-5 mb-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-        <div className="flex items-center space-x-2">
-          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-            EXERCISES ({filtered.length})
-          </div>
-          <div className="flex items-center space-x-1 ml-2">
-            <button
-              onClick={() => setFilterMode('active')}
-              className={`px-2.5 py-1 rounded text-[11px] font-bold transition border ${
-                filterMode === 'active'
-                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400'
-                  : 'bg-white/5 text-slate-400 border-white/5 hover:text-slate-200'
-              }`}
-            >
-              Active ({activeCount})
-            </button>
-            <button
-              onClick={() => setFilterMode('all')}
-              className={`px-2.5 py-1 rounded text-[11px] font-bold transition border ${
-                filterMode === 'all'
-                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400'
-                  : 'bg-white/5 text-slate-400 border-white/5 hover:text-slate-200'
-              }`}
-            >
-              All ({plateauReports.length})
-            </button>
-            {ignoredCount > 0 && (
-              <button
-                onClick={() => setFilterMode('ignored')}
-                className={`flex items-center space-x-1 px-2.5 py-1 rounded text-[11px] font-bold transition border ${
-                  filterMode === 'ignored'
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                    : 'bg-white/5 text-slate-400 border-white/5 hover:text-slate-200'
-                }`}
-              >
-                <EyeOff className="w-3 h-3" />
-                <span>Ignored ({ignoredCount})</span>
-              </button>
-            )}
-          </div>
-        </div>
+  const options: { value: FilterMode; label: string }[] = [
+    { value: 'active', label: `Active ${activeCount}` },
+    { value: 'all', label: `All ${plateauReports.length}` },
+  ];
+  if (ignoredCount > 0 || filterMode === 'ignored') {
+    options.push({ value: 'ignored', label: `Ignored ${ignoredCount}` });
+  }
 
-        <div className="relative w-full sm:w-72">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+  return (
+    <Card className="flex max-h-72 flex-col overflow-hidden lg:sticky lg:top-28 lg:max-h-[calc(100vh-8.5rem)]">
+      <div className="space-y-2.5 border-b border-line p-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
           <input
-            type="text"
-            placeholder="Search exercises..."
+            type="search"
+            placeholder="Search exercises"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 bg-slate-900/80 border border-white/10 rounded-lg text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition"
+            className="input pl-8"
           />
         </div>
+        <Segmented
+          aria-label="Exercise filter"
+          value={filterMode}
+          onChange={setFilterMode}
+          options={options}
+          className="flex [&>button]:flex-1"
+        />
       </div>
 
-      <div className="flex flex-wrap gap-2 max-h-44 overflow-y-auto pr-1">
+      <ul className="flex-1 overflow-y-auto p-1.5">
+        {filtered.length === 0 && (
+          <li className="px-3 py-6 text-center text-[13px] text-muted">No exercises found</li>
+        )}
         {filtered.map((item) => {
           const isSelected = item.exerciseName === selectedExercise;
-          const isPlateau = item.status === 'plateaued' && item.isActive && !item.isIgnored;
-          const isRegressing = item.status === 'regressing' && item.isActive && !item.isIgnored;
-
+          const { label, tone } = describeStatus(item);
           return (
-            <button
-              key={item.exerciseName}
-              onClick={() => onSelect(item.exerciseName)}
-              className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition border ${
-                isSelected
-                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400 shadow-glow-cyan'
-                  : item.isIgnored
-                  ? 'bg-slate-950/60 text-slate-500 border-dashed border-slate-700 hover:border-slate-500'
-                  : item.isActive
-                  ? 'bg-slate-900/60 text-slate-300 border-white/5 hover:border-white/20'
-                  : 'bg-slate-950/60 text-slate-500 border-white/5 hover:border-white/20'
-              }`}
-            >
-              <span>{item.exerciseName}</span>
-              {isPlateau && (
-                <span className="w-2 h-2 rounded-full bg-amber-400 shadow-glow-gold" title="Plateaued" />
-              )}
-              {isRegressing && (
-                <span className="w-2 h-2 rounded-full bg-rose-400 shadow-glow-rose" title="Regressing" />
-              )}
-              {item.isIgnored && (
-                <span className="text-[9px] uppercase px-1 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
-                  Ignored
+            <li key={item.exerciseName}>
+              <button
+                onClick={() => onSelect(item.exerciseName)}
+                aria-current={isSelected ? 'true' : undefined}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors',
+                  isSelected ? 'bg-accent/10 text-fg' : 'text-muted hover:bg-raised hover:text-fg'
+                )}
+              >
+                <span
+                  className={cn('h-1.5 w-1.5 shrink-0 rounded-full', toneDot[tone])}
+                  title={label}
+                />
+                <span className={cn('min-w-0 flex-1 truncate', isSelected && 'font-medium')}>
+                  {item.exerciseName}
                 </span>
-              )}
-              {!item.isIgnored && !item.isActive && (
-                <span className="text-[9px] uppercase px-1 py-0.2 rounded bg-slate-800 text-slate-400">
-                  Dormant
-                </span>
-              )}
-            </button>
+                {item.currentE1RM > 0 && (
+                  <span className="font-mono text-xs tabular-nums text-faint">
+                    {Math.round(item.currentE1RM)}
+                  </span>
+                )}
+              </button>
+            </li>
           );
         })}
-      </div>
-    </div>
+      </ul>
+    </Card>
   );
 };

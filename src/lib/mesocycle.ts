@@ -1,4 +1,4 @@
-import { differenceInDays, startOfWeek, endOfWeek, addDays, format } from 'date-fns';
+import { differenceInDays, startOfWeek, endOfWeek, addDays, format, parseISO } from 'date-fns';
 import {
   ExercisePlateauReport,
   MesocycleReport,
@@ -37,12 +37,13 @@ export function calculateMesocycleStatus(
   let deloadMonday: Date | null = null;
 
   if (settings?.lastDeloadDate) {
-    const d = new Date(settings.lastDeloadDate);
+    // parseISO keeps date-only strings in local time (new Date() would read them as UTC)
+    const d = parseISO(settings.lastDeloadDate);
     deloadMonday = startOfWeek(d, { weekStartsOn: 1 });
     // New training block starts the Monday immediately following the deload week
     anchorDate = addDays(deloadMonday, 7);
   } else if (settings?.mesocycleAnchorDate) {
-    anchorDate = new Date(settings.mesocycleAnchorDate);
+    anchorDate = parseISO(settings.mesocycleAnchorDate);
     deloadMonday = addDays(anchorDate, -7);
   } else {
     // Check if any workouts are labeled or noted as 'deload'
@@ -102,7 +103,7 @@ export function calculateMesocycleStatus(
     triggerReason = `Week ${currentWeek} of ${totalWeeks} reached AND ${plateauedCount} active lifts are stalled. Fatigue accumulation is high.`;
     suggestedAction = `Immediate 1-week deload: Reduce volume by 50% and keep 2-3 reps in reserve on all compound lifts.`;
   } else if (isTimeTrigger) {
-    triggerReason = `Scheduled 6-week block completed (Week ${currentWeek}/${totalWeeks}). Systemic recovery window recommended.`;
+    triggerReason = `Scheduled ${totalWeeks}-week block completed (Week ${currentWeek}/${totalWeeks}). Systemic recovery window recommended.`;
     suggestedAction = `Schedule a 1-week deload: maintain intensity (weight) but cut working sets in half to dissipate systemic fatigue.`;
   } else if (isMultiPlateauTrigger) {
     triggerReason = `High plateau density: ${plateauedCount} active exercises are stalling simultaneously before Week ${totalWeeks}.`;

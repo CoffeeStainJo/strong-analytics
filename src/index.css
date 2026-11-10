@@ -3,65 +3,99 @@
 @tailwind utilities;
 
 @layer base {
+  /* Light theme: warm paper, ink text */
+  :root {
+    --bg: 246 245 241;
+    --surface: 255 255 255;
+    --raised: 240 238 233;
+    --line: 226 223 216;
+    --fg: 26 27 30;
+    --muted: 99 101 108;
+    --faint: 148 150 157;
+    --accent: 67 83 214;
+    --accent-fg: 255 255 255;
+    --good: 21 136 88;
+    --warn: 176 110 8;
+    --bad: 200 62 52;
+    color-scheme: light;
+  }
+
+  /* Dark theme: graphite, chalk text */
+  :root.dark {
+    --bg: 13 14 16;
+    --surface: 21 23 26;
+    --raised: 30 32 36;
+    --line: 41 44 49;
+    --fg: 236 235 230;
+    --muted: 154 157 164;
+    --faint: 105 109 117;
+    --accent: 136 152 255;
+    --accent-fg: 13 14 16;
+    --good: 98 210 156;
+    --warn: 238 180 76;
+    --bad: 244 116 108;
+    color-scheme: dark;
+  }
+
   body {
-    background-color: #070b16;
-    background-image: 
-      radial-gradient(circle at 50% 0%, rgba(0, 242, 254, 0.05) 0%, transparent 50%),
-      radial-gradient(circle at 100% 100%, rgba(251, 191, 36, 0.03) 0%, transparent 40%);
-    background-attachment: fixed;
-    color: #e2e8f0;
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    @apply bg-bg text-fg font-sans antialiased;
+    font-feature-settings: 'ss01', 'cv11';
   }
 
-  h1, h2, h3, .font-heading {
-    font-family: 'Space Grotesk', 'Plus Jakarta Sans', sans-serif;
+  ::selection {
+    background: rgb(var(--accent) / 0.25);
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--accent));
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  input[type='date']::-webkit-calendar-picker-indicator {
+    opacity: 0.6;
   }
 }
 
-/* Glassmorphism Card Styles */
-.glass-panel {
-  background: rgba(13, 21, 39, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+@layer components {
+  /* Small uppercase label used above values and sections */
+  .eyebrow {
+    @apply text-[11px] font-medium uppercase tracking-[0.08em] text-faint;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm text-fg placeholder:text-faint transition-colors;
+    @apply focus:border-accent focus:outline-none;
+  }
 }
 
-.glass-panel-active {
-  background: rgba(17, 27, 51, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(251, 191, 36, 0.5);
-  box-shadow: 0 0 25px -4px rgba(251, 191, 36, 0.25);
+/* Scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--line)) transparent;
 }
 
-.glass-panel-cyan {
-  background: rgba(13, 21, 39, 0.8);
-  border: 1px solid rgba(0, 242, 254, 0.3);
-  box-shadow: 0 0 20px -3px rgba(0, 242, 254, 0.15);
-}
-
-.glass-panel-rose {
-  background: rgba(13, 21, 39, 0.8);
-  border: 1px solid rgba(244, 63, 94, 0.35);
-  box-shadow: 0 0 20px -3px rgba(244, 63, 94, 0.15);
-}
-
-/* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: #070b16;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: rgb(var(--line));
   border-radius: 9999px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+/* Recharts: remove the focus outline drawn around chart surfaces */
+.recharts-wrapper:focus,
+.recharts-surface:focus {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
